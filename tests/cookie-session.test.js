@@ -48,7 +48,10 @@ test('tampered encrypted session cookies are rejected', () => {
   first.req.session.user = { login: 'Ravs-Dev' };
   first.req.session.save(() => {});
   const [name, value] = first.cookies[0].split(';')[0].split('=');
-  const tampered = value.slice(0, -1) + (value.endsWith('A') ? 'B' : 'A');
+  const [iv, tag, data] = value.split('.');
+  const changedTag = Buffer.from(tag, 'base64url');
+  changedTag[0] ^= 0x01;
+  const tampered = `${iv}.${changedTag.toString('base64url')}.${data}`;
 
   const second = invoke(`${name}=${tampered}`);
   assert.equal(second.req.session.user, undefined);
