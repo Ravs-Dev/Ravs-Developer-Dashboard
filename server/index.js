@@ -3,11 +3,10 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
-import session from 'express-session';
-import fileStoreFactory from 'session-file-store';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 import { decryptSecret, encryptSecret, generatePkcePair, safeEqual } from './security.js';
+import { createEncryptedCookieSession } from './cookie-session.js';
 import {
   createGitHubClient,
   loadDashboard,
@@ -18,8 +17,10 @@ import {
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
-const APP_BASE_URL = (process.env.APP_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
-const FRONTEND_ORIGIN = (process.env.FRONTEND_ORIGIN || 'http://localhost:5173').replace(/\/$/, '');
+const VERCEL_DOMAIN = process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL;
+const DEFAULT_APP_URL = VERCEL_DOMAIN ? `https://${VERCEL_DOMAIN}` : `http://localhost:${PORT}`;
+const APP_BASE_URL = (process.env.APP_BASE_URL || DEFAULT_APP_URL).replace(/\/$/, '');
+const FRONTEND_ORIGIN = (process.env.FRONTEND_ORIGIN || (process.env.VERCEL ? APP_BASE_URL : 'http://localhost:5173')).replace(/\/$/, '');
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 const REQUIRED_ENV = ['GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET', 'SESSION_SECRET', 'TOKEN_ENCRYPTION_KEY'];
 const missing = REQUIRED_ENV.filter((key) => !process.env[key] || process.env[key].startsWith('replace-'));
@@ -29,7 +30,7 @@ if (missing.length) {
 }
 if (IS_PRODUCTION) {
   const productionMissing = [];
-  if (!process.env.APP_BASE_URL) productionMissing.push('APP_BASE_URL');
+  if (!process.env.APP_BASE_URL && !VERCEL_DOMAIN) productionMissing.push('APP_BASE_URL or VERCEL_PROJECT_PRODUCTION_URL');
   if (!process.env.SUPPORT_EMAIL) productionMissing.push('SUPPORT_EMAIL');
   if (productionMissing.length) throw new Error(`Production configuration is incomplete: ${productionMissing.join(', ')}`);
   if (new URL(APP_BASE_URL).protocol !== 'https:') throw new Error('APP_BASE_URL must use HTTPS in production.');
@@ -42,17 +43,6 @@ if (process.env.TOKEN_ENCRYPTION_KEY && !missing.includes('TOKEN_ENCRYPTION_KEY'
   encryptSecret('ravs-dashboard-key-validation', process.env.TOKEN_ENCRYPTION_KEY);
 }
 
-const sessionDir = path.resolve(process.env.SESSION_DIR || './.data/sessions');
-fs.mkdirSync(sessionDir, { recursive: true });
-const FileStore = fileStoreFactory(session);
-const sessionStore = new FileStore({
-  path: sessionDir,
-  ttl: Number(process.env.SESSION_MAX_AGE_DAYS || 7) * 24 * 60 * 60,
-  reapInterval: 60 * 60,
-  retries: 1,
-  secret: process.env.SESSION_SECRET || 'development-only-file-store-secret',
-  logFn: () => {},
-});
 
 app.disable('x-powered-by');
 if (IS_PRODUCTION) app.set('trust proxy', 1);
@@ -75,20 +65,11 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }));
 app.use(express.json({ limit: '32kb' }));
-app.use(session({
+app.use(createEncryptedCookieSession({
   name: 'ravs.sid',
   secret: process.env.SESSION_SECRET || 'development-only-change-this-session-secret-32chars',
-  store: sessionStore,
-  resave: false,
-  saveUninitialized: false,
-  rolling: true,
-  cookie: {
-    httpOnly: true,
-    secure: IS_PRODUCTION,
-    sameSite: 'lax',
-    maxAge: Number(process.env.SESSION_MAX_AGE_DAYS || 7) * 24 * 60 * 60 * 1000,
-    path: '/',
-  },
+  maxAgeMs: Number(process.env.SESSION_MAX_AGE_DAYS || 1) * 24 * 60 * 60 * 1000,
+  secure: IS_PRODUCTION,
 }));
 
 const apiLimiter = rateLimit({
@@ -167,6 +148,7 @@ app.get('/api/auth/github', authLimiter, (req, res, next) => {
   const { verifier, challenge } = generatePkcePair();
   req.session.oauthState = state;
   req.session.pkceVerifier = verifier;
+  req.session.oauthCreatedAt = Date.now();
   req.session.save((error) => {
     if (error) return next(error);
     const authorizeUrl = new URL('https://github.com/login/oauth/authorize');
@@ -187,7 +169,9 @@ app.get('/api/auth/github/callback', authLimiter, async (req, res, next) => {
     if (error) return res.redirect(frontendRedirect('/?oauth_error=denied'));
     if (typeof code !== 'string' || typeof state !== 'string'
       || !safeEqual(state, req.session?.oauthState || '')
-      || typeof req.session?.pkceVerifier !== 'string') {
+      || typeof req.session?.pkceVerifier !== 'string'
+      || !Number.isFinite(req.session?.oauthCreatedAt)
+      || Date.now() - req.session.oauthCreatedAt > 10 * 60 * 1000) {
       return res.redirect(frontendRedirect('/?oauth_error=state'));
     }
 
@@ -295,13 +279,10 @@ app.get('/api/releases', ensureAuthenticated, async (req, res, next) => {
 });
 
 // Serve the built React client from the same origin in production.
-const clientDist = path.resolve('dist');
+const clientDist = path.resolve('public');
 if (fs.existsSync(clientDist)) {
-  app.use(express.static(clientDist, { index: false, maxAge: IS_PRODUCTION ? '1h' : 0 }));
-  app.use((req, res, next) => {
-    if (req.method !== 'GET' || req.path.startsWith('/api/')) return next();
-    res.sendFile(path.join(clientDist, 'index.html'));
-  });
+  // Locally serve the Vite output. Vercel serves /public assets from its CDN.
+  app.use(express.static(clientDist, { index: 'index.html', maxAge: IS_PRODUCTION ? '1h' : 0 }));
 }
 
 app.use((error, _req, res, _next) => {
@@ -316,7 +297,7 @@ app.use((error, _req, res, _next) => {
   });
 });
 
-if (process.env.NODE_ENV !== 'test') {
+if (!process.env.VERCEL && process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => console.log(`[RAVS Dashboard] Server listening on port ${PORT}`));
 }
 
