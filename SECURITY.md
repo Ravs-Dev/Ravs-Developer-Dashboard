@@ -12,8 +12,8 @@ Do not publish exploit details in a public issue. Contact the maintainer through
 
 - OAuth Authorization Code flow with PKCE S256 and a random state value.
 - The OAuth client secret and token-encryption key remain server-side.
-- Access tokens are AES-256-GCM encrypted before being stored in the session file.
-- The session cookie is HttpOnly and SameSite=Lax; Secure is enabled in production.
+- The session payload (including the separately AES-256-GCM encrypted OAuth token) is encrypted with AES-256-GCM before being placed in a short-lived HttpOnly cookie. No server filesystem is used for authentication state.
+- The session cookie is HttpOnly and SameSite=Lax; Secure is enabled in production. Its contents are authenticated-encrypted, expire after one day by default, and are not readable by browser JavaScript.
 - Session ID is regenerated after successful authentication.
 - Read-only application routes and least-privilege default OAuth scopes (`read:user`).
 - Helmet security headers, Content Security Policy, rate limiting, request body limits, and no-store API responses.
@@ -21,7 +21,7 @@ Do not publish exploit details in a public issue. Contact the maintainer through
 ## Operational requirements
 
 - Use unique secrets in every environment. Rotate the GitHub OAuth client secret and encryption key if exposure is suspected.
-- Back up the persistent session volume securely. Session files contain encrypted tokens and should still be treated as sensitive data.
+- Keep SESSION_SECRET and TOKEN_ENCRYPTION_KEY private and stable. Rotating either key invalidates existing browser sessions.
 - Do not commit `.env`, OAuth secrets, raw access tokens, or session data.
 - Restrict server and deployment-provider access.
 - Keep `NODE_ENV=production`, `APP_BASE_URL`, and `FRONTEND_ORIGIN` correct for the HTTPS deployment.
