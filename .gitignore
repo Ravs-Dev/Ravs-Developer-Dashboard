@@ -8,3 +8,6 @@ coverage/
 *.log
 .data/
 server/sessions/
+
+# Vite production output for Vercel
+/public/
