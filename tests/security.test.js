@@ -31,7 +31,8 @@ test('AES-256-GCM encrypts and decrypts secrets', () => {
 test('AES-256-GCM rejects tampered payloads', () => {
   const encrypted = encryptSecret('gho_example_token', KEY);
   const [iv, tag, data] = encrypted.split('.');
-  const replacement = data.endsWith('A') ? 'B' : 'A';
-  const changed = `${iv}.${tag}.${data.slice(0, -1)}${replacement}`;
+  const changedTag = Buffer.from(tag, 'base64url');
+  changedTag[0] ^= 0x01;
+  const changed = `${iv}.${changedTag.toString('base64url')}.${data}`;
   assert.throws(() => decryptSecret(changed, KEY));
 });
