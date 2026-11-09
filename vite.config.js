@@ -13,5 +13,7 @@ export default defineConfig({
       },
     },
   },
-  build: { sourcemap: false },
+  // Vercel serves files from /public through its CDN; the Express function handles /api routes.
+  publicDir: false,
+  build: { outDir: 'public', emptyOutDir: true, sourcemap: false },
 });
