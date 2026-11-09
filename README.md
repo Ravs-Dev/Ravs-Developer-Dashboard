@@ -5,15 +5,15 @@ A secure, responsive GitHub dashboard for the **Ravs-Dev** developer workspace. 
 ## Features
 
 - GitHub OAuth 2.0 Authorization Code flow with **PKCE S256** and state validation.
-- Server-side sessions with `HttpOnly`, `SameSite=Lax`, and production `Secure` cookies.
-- AES-256-GCM encryption for the OAuth access token before it is written to the session store.
+- Stateless session cookies encrypted with AES-256-GCM, `HttpOnly`, `SameSite=Lax`, and production `Secure` flags.
+- The OAuth access token is separately encrypted with AES-256-GCM before being included in the encrypted session cookie.
 - Dashboard metrics for public repositories, stars, forks, followers, and language distribution.
 - Repository search and cards.
 - Recently authored public Pull Requests.
 - GitHub Actions workflow runs across recently updated public repositories.
 - Release feed across recently updated public repositories.
 - Rate limiting, Helmet security headers, CSP, request size limit, no-store API responses, and OAuth callback validation.
-- Docker Compose and Render deployment configuration, CI checks, and security documentation.
+- Vercel deployment configuration, Docker Compose for self-hosting, CI checks, and security documentation.
 
 > **Access model:** the default OAuth scopes are `read:user`. This deliberately keeps the initial connection low-privilege. The dashboard currently reads public repository data. It does not request broad write access to private repositories. If private-repository support is required later, prefer a GitHub App with only the specific read-only repository permissions needed.
 
@@ -112,9 +112,15 @@ docker compose up --build -d
 
 The Compose file mounts a persistent volume at `/var/data` for encrypted sessions. Put a reverse proxy with HTTPS in front of the app if exposing it directly to the internet. `NODE_ENV=production` enables secure cookies; do not disable this in a public deployment.
 
-## Deploy to Render
+## Deploy to Vercel (Hobby)
 
-The included `render.yaml` is a Blueprint starting point. It uses a paid web-service instance and a persistent disk because file-backed sessions must survive restarts. After creating the service, set `APP_BASE_URL`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `TOKEN_ENCRYPTION_KEY`, and `SUPPORT_EMAIL` in the Render dashboard. Generate `TOKEN_ENCRYPTION_KEY` with `openssl rand -hex 32`; production startup checks enforce the required secrets, HTTPS URL, and support inbox. Copy the final service URL into the GitHub OAuth App homepage and callback settings, then redeploy.
+1. Import this repository into Vercel and keep the project root at the repository root.
+2. Vercel detects the Express entrypoint in the root `index.js`; the Vite build writes frontend assets to `public/`, which Vercel serves through its CDN.
+3. Add these Production Environment Variables in Project Settings → Environment Variables: `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `SESSION_SECRET`, `TOKEN_ENCRYPTION_KEY`, and `SUPPORT_EMAIL`. Generate the two secrets with `openssl rand -hex 32`. Set `APP_BASE_URL` and `FRONTEND_ORIGIN` to the stable production `https://<project>.vercel.app` URL after Vercel assigns it. `VERCEL_PROJECT_PRODUCTION_URL` is used as a fallback during initial provisioning.
+4. Redeploy after setting environment variables.
+5. In the GitHub OAuth App, set Homepage URL to `APP_BASE_URL` and Authorization callback URL to `${APP_BASE_URL}/api/auth/github/callback`.
+
+The Vercel adapter uses encrypted, stateless browser sessions because serverless instances must not depend on a persistent local filesystem. Sessions expire after one day by default. The Vercel Hobby plan is intended for personal, non-commercial use and has usage limits; check Vercel's current plan terms before using it for a commercial service.
 
 ## GitHub Developer Program readiness
 
@@ -136,8 +142,10 @@ Official reference: [GitHub Developer Program](https://docs.github.com/en/integr
 client/                 React frontend
   src/App.jsx           Dashboard screens and UI
   src/styles.css        Responsive dark UI
+index.js                Vercel Express entrypoint
 server/                 Express backend
-  index.js              OAuth routes, sessions, API routes, static hosting
+  index.js              OAuth routes, encrypted cookie sessions, API routes, local static hosting
+  cookie-session.js     Stateless AES-GCM encrypted session middleware
   github.js              GitHub REST queries and short-lived response cache
   security.js            PKCE, timing-safe comparison, AES-GCM helpers
 tests/                   Node test suite
