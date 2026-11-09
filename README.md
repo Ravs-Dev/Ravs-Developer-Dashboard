@@ -62,8 +62,7 @@ GITHUB_CLIENT_SECRET=your-client-secret
 GITHUB_OAUTH_SCOPES=read:user
 SESSION_SECRET=64-hex-characters-from-openssl
 TOKEN_ENCRYPTION_KEY=64-hex-characters-from-openssl
-SESSION_DIR=./.data/sessions
-SESSION_MAX_AGE_DAYS=7
+SESSION_MAX_AGE_DAYS=1
 SUPPORT_EMAIL=your-real-support-inbox@example.com
 ```
 
@@ -90,10 +89,10 @@ The health endpoint is available at `http://localhost:3000/api/health`.
 
 ## OAuth and security design
 
-1. The server creates a random `state` value and PKCE verifier, stores both in the server-side session, and redirects to GitHub with an S256 challenge.
+1. The server creates a random `state` value and PKCE verifier, stores both inside an authenticated-encrypted HttpOnly cookie, and redirects to GitHub with an S256 challenge.
 2. GitHub returns an authorization code. The server compares the returned state with a timing-safe comparison and exchanges the code with the stored PKCE verifier.
-3. The server fetches the authenticated GitHub profile and regenerates the session ID to mitigate session fixation.
-4. The access token is encrypted with AES-256-GCM before it is stored in the server-side session file. The encryption key is only read from server environment variables.
+3. The server fetches the authenticated GitHub profile, clears the temporary OAuth state, and writes a fresh encrypted cookie containing the authenticated session.
+4. The access token is encrypted with AES-256-GCM before it is included in the separately encrypted session cookie. Both encryption keys are read only from server environment variables.
 5. The browser receives only an opaque session cookie. The token is never returned to client JavaScript or placed in local/session storage.
 6. GitHub data endpoints are read-only. Logout checks the request origin, attempts to revoke the GitHub OAuth app grant, and then destroys the local session. If GitHub cannot confirm revocation, the UI directs the user to remove the app from GitHub Settings → Applications.
 
@@ -110,7 +109,7 @@ See [SECURITY.md](SECURITY.md) for reporting and operational guidance.
 docker compose up --build -d
 ```
 
-The Compose file mounts a persistent volume at `/var/data` for encrypted sessions. Put a reverse proxy with HTTPS in front of the app if exposing it directly to the internet. `NODE_ENV=production` enables secure cookies; do not disable this in a public deployment.
+The Compose file mounts a persistent volume at `/var/data` for application data. Authentication sessions are stateless encrypted cookies, so no session volume is required. Put a reverse proxy with HTTPS in front of the app if exposing it directly to the internet. `NODE_ENV=production` enables secure cookies; do not disable this in a public deployment.
 
 ## Deploy to Vercel (Hobby)
 
