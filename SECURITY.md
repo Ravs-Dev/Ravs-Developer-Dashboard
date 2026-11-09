@@ -14,7 +14,7 @@ Do not publish exploit details in a public issue. Contact the maintainer through
 - The OAuth client secret and token-encryption key remain server-side.
 - The session payload (including the separately AES-256-GCM encrypted OAuth token) is encrypted with AES-256-GCM before being placed in a short-lived HttpOnly cookie. No server filesystem is used for authentication state.
 - The session cookie is HttpOnly and SameSite=Lax; Secure is enabled in production. Its contents are authenticated-encrypted, expire after one day by default, and are not readable by browser JavaScript.
-- Session ID is regenerated after successful authentication.
+- Temporary OAuth state is discarded before the authenticated session cookie is issued, preventing reuse of the pre-authentication state.
 - Read-only application routes and least-privilege default OAuth scopes (`read:user`).
 - Helmet security headers, Content Security Policy, rate limiting, request body limits, and no-store API responses.
 
